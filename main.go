@@ -9,6 +9,7 @@ import (
 	_ "github.com/lib/pq"
 	"log"
 	"net/http"
+	"time"
 	"transaction/common"
 )
 
@@ -28,7 +29,34 @@ type Journal struct {
 	JournalID  string `json:"id"`
 	UserID     string `json:"user_id"`
 	Amount     int    `json:"amount"`
-	Created_at string `json:"created_at"`
+	CreatedAt string `json:"created_at"`
+	SuccessTask string `json:"success_task"`
+	SuccessOperation string `json:"success_operation"`
+}
+
+func task(ctx context.Context) {
+	// запускаем бесконечный цикл
+	for {
+		select {
+		// проверяем не завершён ли ещё контекст и выходим, если завершён
+		case <-ctx.Done():
+			return
+
+		// выполняем код
+		default:
+			println("Запущена фоновая гоурутина...")
+			journalList := getJournal(false)
+			for _, journal := range journalList {
+				description, err := transaction(journal)
+				if err != nil {
+					fmt.Println(err)
+				}
+				updateJournal(description, journal)
+			}
+		}
+		// делаем паузу перед следующей итерацией
+		time.Sleep(5 * time.Second)
+	}
 }
 
 func handleRequest() {
@@ -50,14 +78,14 @@ func handleRequest() {
 		jsonData, _ := json.Marshal(users)
 		fmt.Fprint(w, string(jsonData))
 	})
-    
+
 	// Получение журнала
 	http.HandleFunc("/api/v1/journal", func(w http.ResponseWriter, r *http.Request) {
-		journal := getJournal()
+		journal := getJournal(true)
 		jsonData, _ := json.Marshal(journal)
 		fmt.Fprint(w, string(jsonData))
 	})
-	
+
 	// Создание пользователя
 	http.HandleFunc("/api/v1/ctreate_user", func(w http.ResponseWriter, r *http.Request) {
 		name := r.FormValue("name")
@@ -77,22 +105,25 @@ func handleRequest() {
 			fmt.Println(err)
 		}
 		writeJournal(detailTransaction)
-		responce, err := transaction(detailTransaction)
-		if err != nil {
-			fmt.Println(err)
-			w.WriteHeader(400)
-		}
-		fmt.Fprint(w, responce)
+		fmt.Fprint(w, "Данные записаны в журнал")
 	})
 
 	http.ListenAndServe(":8080", nil)
 }
 
 func main() {
+	// создаём контекст с функцией завершения
+	ctx, cancel := context.WithCancel(context.Background())
+	// запускаем нашу горутину
+	go task(ctx)
+
 	handleRequest()
+
+	// завершаем контекст, чтобы завершить горутину
+	cancel()
 }
 
-func transaction(detailTransaction Transactions) (string, error) {
+func transaction(detail Journal) (string, error) {
 	settings := get_settings.GetSettings("")
 
 	// Подключаемся к существующей базе данных
@@ -113,9 +144,9 @@ func transaction(detailTransaction Transactions) (string, error) {
 	// Откладываем откат на случай, если что-то пойдет не так.
 	defer tx.Rollback()
 
-	if detailTransaction.Amount < 0 {
+	if detail.Amount < 0 {
 		// Подтверждаем, что денег хватает
-		enough, err := enoughMoney(tx, ctx, detailTransaction.Amount, detailTransaction.User)
+		enough, err := enoughMoney(tx, ctx, detail.Amount, detail.UserID)
 		if !enough {
 			fmt.Println("\n", (err), "\n Не хватает денег!")
 			return "Не хватает денег!", errors.New("Не хватает денег!")
@@ -123,7 +154,7 @@ func transaction(detailTransaction Transactions) (string, error) {
 	}
 
 	// Обновляем баланс
-	err = updateMoney(tx, ctx, detailTransaction.Amount, detailTransaction.User)
+	err = updateMoney(tx, ctx, detail.Amount, detail.UserID)
 	if err != nil {
 		fmt.Println("\n", (err), "\n ....Откат транзакции!")
 		return "Откат транзакции!", err
@@ -151,6 +182,32 @@ func updateMoney(tx *sql.Tx, ctx context.Context, money int, userID string) erro
 	_, err := tx.ExecContext(ctx, query)
 
 	return err
+}
+
+func updateJournal(description string, journal Journal) error {
+	settings := get_settings.GetSettings("")
+
+	// Подключаемся к существующей базе данных
+	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		settings.DBHost, settings.DBPort, settings.DBUsername, settings.DBPassword, settings.DBName)
+
+	db, err := sql.Open("postgres", psqlInfo)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+    
+	success_operation := false
+	if description == "Успешно!" {
+		success_operation = true 
+	}
+	query := fmt.Sprintf("UPDATE journal SET description='%s', success_task=true, success_operation=%t WHERE id=%s", description, success_operation, journal.JournalID)
+	_, err = db.Exec(query)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func getUsers() []Users {
@@ -228,7 +285,7 @@ func writeJournal(detailTransaction Transactions) (string, error) {
 	return "Ok", nil
 }
 
-func getJournal() []Journal {
+func getJournal(all bool) []Journal {
 	settings := get_settings.GetSettings("")
 
 	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
@@ -239,7 +296,16 @@ func getJournal() []Journal {
 		log.Fatal(err)
 	}
 
-	rows, err := db.Query("SELECT id, user_id, amount, created_at FROM journal ORDER BY created_at")
+	query := `SELECT id, user_id, amount, created_at, success_task, success_operation 
+	          FROM journal 
+			  ORDER BY created_at`
+	if !all {
+		query = `SELECT id, user_id, amount, created_at, success_task, success_operation 
+				FROM journal 
+				WHERE success_task = FALSE
+				ORDER BY user_id, created_at`
+	}
+	rows, err := db.Query(query)
 	if err != nil {
 		panic(err)
 	}
@@ -248,7 +314,7 @@ func getJournal() []Journal {
 	journal := []Journal{}
 	for rows.Next() {
 		j := Journal{}
-		err := rows.Scan(&j.JournalID, &j.UserID, &j.Amount, &j.Created_at)
+		err := rows.Scan(&j.JournalID, &j.UserID, &j.Amount, &j.CreatedAt, &j.SuccessTask, &j.SuccessOperation)
 		if err != nil {
 			fmt.Println(err)
 			continue

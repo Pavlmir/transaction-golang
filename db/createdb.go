@@ -84,7 +84,8 @@ func createJournalTable(settings get_settings.Settings) error {
 		amount integer NOT NULL,
 		created_at timestamp default CURRENT_TIMESTAMP,
 		updated_at timestamp default CURRENT_TIMESTAMP,
-		successful BOOLEAN NOT NULL default FALSE,
+		success_task BOOLEAN NOT NULL default FALSE,
+		success_operation BOOLEAN NOT NULL default FALSE,
 		CONSTRAINT journal_pkey PRIMARY KEY (id),
 	    CONSTRAINT journal_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id))`
 	res, err := db.Exec(query)
