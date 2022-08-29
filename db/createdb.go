@@ -48,12 +48,11 @@ func createUsersTable(settings get_settings.Settings) error {
 	defer db.Close()
 
 	query := `CREATE TABLE IF NOT EXISTS users(
-		id serial4  NOT NULL,
+		id serial4  NOT NULL PRIMARY KEY,
 		name varchar(100) NOT NULL, 
 		balance integer NOT NULL,
 		created_at timestamp default CURRENT_TIMESTAMP,
-		updated_at timestamp default CURRENT_TIMESTAMP,
-		CONSTRAINT users_pkey PRIMARY KEY (id))`
+		updated_at timestamp default CURRENT_TIMESTAMP)`
 	res, err := db.Exec(query)
 	if err != nil {
 		fmt.Printf("\nError %s when creating users table", err)
@@ -78,7 +77,7 @@ func createJournalTable(settings get_settings.Settings) error {
 	defer db.Close()
 
 	query := `CREATE TABLE IF NOT EXISTS journal(
-		id serial4 NOT NULL ,
+		id serial4 NOT NULL PRIMARY KEY,
 		user_id int4 NOT NULL ,
 		description varchar(100) NULL, 
 		amount integer NOT NULL,
@@ -86,8 +85,7 @@ func createJournalTable(settings get_settings.Settings) error {
 		updated_at timestamp default CURRENT_TIMESTAMP,
 		success_task BOOLEAN NOT NULL default FALSE,
 		success_operation BOOLEAN NOT NULL default FALSE,
-		CONSTRAINT journal_pkey PRIMARY KEY (id),
-	    CONSTRAINT journal_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id))`
+		FOREIGN KEY (user_id) REFERENCES public.users(id))`
 	res, err := db.Exec(query)
 	if err != nil {
 		fmt.Printf("\nError %s when creating journal table", err)
